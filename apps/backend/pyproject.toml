@@ -30,4 +30,4 @@ entrypoint = "config.wsgi:application"
 entrypoint = "worker:app"
 topics = ["celery"]
 [tool.vercel.scripts]
-build = 'if [ -n "$DATABASE_URL" ]; then python manage.py migrate --noinput; fi'
+build = "python manage.py migrate --noinput"
