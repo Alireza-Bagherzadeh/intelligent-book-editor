@@ -5,9 +5,6 @@ os.environ.setdefault(
     "config.settings",
 )
 
-import django
-
-django.setup()
 
 from config.celery import app
 
