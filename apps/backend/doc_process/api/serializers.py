@@ -71,38 +71,56 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
             None,
         )
 
-        # Raw text - no special file handling required
+        # Raw text
         if uploaded_file is None:
-            return Document.objects.create(**validated_data)
+            return Document.objects.create(
+                **validated_data
+            )
 
         validated_data["original_filename"] = (
             uploaded_file.name
         )
+
         validated_data["mime_type"] = (
-            getattr(uploaded_file, "content_type", "")
+            getattr(
+                uploaded_file,
+                "content_type",
+                "",
+            )
             or
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            "application/vnd.openxmlformats-officedocument."
+            "wordprocessingml.document"
         )
+
         validated_data["file_size"] = uploaded_file.size
-        validated_data["source_type"] = Document.SourceType.DOCX
+
+        validated_data["source_type"] = (
+            Document.SourceType.DOCX
+        )
+
+        storage_backend = getattr(
+            settings,
+            "FILE_STORAGE_BACKEND",
+            "local",
+        ).lower()
 
         # Production / Vercel
-        if settings.FILE_STORAGE_BACKEND == "database":
+        if storage_backend == "database":
             uploaded_file.seek(0)
+
             file_bytes = uploaded_file.read()
 
             return Document.objects.create(
                 original_file=None,
-                original_file_data=file_bytes,
+                original_file_data=bytes(file_bytes),
                 **validated_data,
             )
 
-        # Local - EXACT old behaviour
+        # Local
         return Document.objects.create(
             original_file=uploaded_file,
             **validated_data,
         )
-
 
 class DocumentDetailSerializer(serializers.ModelSerializer):
     class Meta:
