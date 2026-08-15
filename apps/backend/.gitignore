@@ -1,0 +1,5 @@
+venv
+documents
+/documents
+*.rar
+.env
