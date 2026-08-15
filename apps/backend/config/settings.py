@@ -182,7 +182,15 @@ CORS_ALLOWED_ORIGINS = [
 # Database
 # ======================================================================
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# ======================================================================
+# Database
+# ======================================================================
+
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("POSTGRES_URL")
+    or os.getenv("DATABASE_URL_POSTGRES_URL")
+)
 
 if DATABASE_URL:
     import dj_database_url
@@ -193,7 +201,6 @@ if DATABASE_URL:
             conn_max_age=600,
         )
     }
-
 else:
     DATABASES = {
         "default": {
@@ -206,12 +213,15 @@ else:
         }
     }
 
-FILE_STORAGE_BACKEND = (
-    "database"
-    if DATABASE_URL
-    else "local"
-)
 
+# ======================================================================
+# File Storage
+# ======================================================================
+
+FILE_STORAGE_BACKEND = os.getenv(
+    "FILE_STORAGE_BACKEND",
+    "database" if DATABASE_URL else "local",
+).lower()
 # ======================================================================
 # File Storage Strategy
 # ======================================================================
