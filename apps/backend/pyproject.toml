@@ -29,5 +29,3 @@ entrypoint = "config.wsgi:application"
 [[tool.vercel.subscribers]]
 entrypoint = "worker:app"
 topics = ["celery"]
-[tool.vercel.scripts]
-build = "python manage.py migrate --noinput"
