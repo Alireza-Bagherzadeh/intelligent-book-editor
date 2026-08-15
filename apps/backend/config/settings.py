@@ -29,11 +29,18 @@ SECRET_KEY = os.getenv(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
-ALLOWED_HOSTS = os.getenv(
-    "ALLOWED_HOSTS",
-    "localhost,127.0.0.1"
-).split(",")
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv(
+        "ALLOWED_HOSTS",
+        "localhost,127.0.0.1"
+    ).split(",")
+    if host.strip()
+]
 
+# Allow Vercel deployment/preview domains
+if os.getenv("VERCEL"):
+    ALLOWED_HOSTS.append(".vercel.app")
 
 # تنظیمات Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
