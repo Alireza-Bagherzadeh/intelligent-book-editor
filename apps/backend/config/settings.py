@@ -163,42 +163,13 @@ TEMPLATES = [
 # CORS
 # ======================================================================
 
-# ======================================================================
-# CORS
-# ======================================================================
-
-def normalize_origin(value: str) -> str:
-    value = value.strip()
-
-    if not value:
-        return ""
-
-    parsed = urlsplit(value)
-
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}"
-
-    return value.rstrip("/")
-
-
-_raw_cors_origins = os.getenv(
-    "CORS_ALLOWED_ORIGINS",
-    (
-        "http://localhost:3000,"
-        "http://127.0.0.1:3000,"
-        "http://localhost:5173,"
-        "http://127.0.0.1:5173,"
-        "https://intelligent-book-editor.vercel.app"
-    ),
-).split(",")
-
-CORS_ALLOWED_ORIGINS = list(
-    dict.fromkeys(
-        normalize_origin(origin)
-        for origin in _raw_cors_origins
-        if origin.strip()
-    )
-)
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://intelligent-book-editor.vercel.app",
+]
 
 # ======================================================================
 # Database
