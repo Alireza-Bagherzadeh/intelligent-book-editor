@@ -4,7 +4,7 @@ import logging
 import difflib
 from django.utils import timezone
 from django.db import transaction
-from django_q.tasks import async_task  # Added to trigger background tasks
+from doc_process.task_queue import enqueue_task  # Added to trigger background tasks
 
 from doc_process.models import Document, BlockIssue, ReviewJob
 
@@ -218,7 +218,7 @@ class MockAiReview:
             # Trigger the Real AI (Gemini) review in the background
             # Make sure 'doc_process' matches your actual app name
             # ---------------------------------------------------------
-            async_task('doc_process.tasks.run_ai_review_task', document.id)
+            enqueue_task('doc_process.tasks.run_ai_review_task', document.id)
 
             return {
                 "status": "success",

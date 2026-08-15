@@ -1,0 +1,15 @@
+[project]
+name = "intelligent-book-editor-backend"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+
+dependencies = [
+    "celery",
+]
+
+[tool.vercel]
+entrypoint = "config.wsgi:application"
+
+[[tool.vercel.subscribers]]
+entrypoint = "worker:app"
+topics = ["celery"]

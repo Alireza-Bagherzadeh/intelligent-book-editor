@@ -6,7 +6,7 @@ from django.utils import timezone
 from .models import Document, ReviewJob, DocumentBlock
 from .services.normal_review_service import MockAiReview
 from .services.document_pipeline import DocumentPipelineService
-from django_q.tasks import async_task
+from .task_queue import enqueue_task
 from .services.text_diff_service import process_and_save_block_differences
 from .services.ai_review_service import GeminiReviewService
 
@@ -76,7 +76,7 @@ def run_document_review_job_task(review_job_id: int):
         summary = llm_service.review_document(document, review_job)
 
         # Enqueue next pipeline step: block differences
-        async_task(
+        enqueue_task(
             "doc_process.tasks.run_block_difference_task",
             review_job.id,
             task_name=f"BlockDiff-{review_job.id}",

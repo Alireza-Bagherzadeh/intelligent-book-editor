@@ -1,4 +1,4 @@
-from django_q.tasks import async_task
+from doc_process.task_queue import enqueue_task
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 from rest_framework.response import Response
@@ -27,7 +27,7 @@ class DocumentUploadView(APIView):
         serializer.is_valid(raise_exception=True)
         document = serializer.save()
 
-        async_task(
+        enqueue_task(
             "doc_process.tasks.run_document_parsing_task",
             document.id,
             task_name=f"ParseDoc-{document.id}",
