@@ -10,7 +10,9 @@ from django.db import transaction
 from doc_process.models import Document, DocumentBlock
 from doc_process.services.docx_parser import DocxParseService
 from doc_process.services.raw_text_parser import RawTextParseService
-
+from doc_process.services.file_materializer import (
+    materialize_original_document,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,27 @@ class DocumentPipelineService:
 
             document.status = Document.Status.PARSED
             document.processing_error = ""
-            document.save(update_fields=["status", "processing_error", "updated_at"])
+            from django.conf import settings
+
+            if settings.FILE_STORAGE_BACKEND == "database":
+                document.original_file_data = None
+
+                document.save(
+                    update_fields=[
+                        "status",
+                        "processing_error",
+                        "original_file_data",
+                        "updated_at",
+                    ]
+                )
+            else:
+                document.save(
+                    update_fields=[
+                        "status",
+                        "processing_error",
+                        "updated_at",
+                    ]
+                )
 
             logger.info(
                 "Document %s parsed successfully. Total blocks: %s",
@@ -59,12 +81,8 @@ class DocumentPipelineService:
     def _extract_blocks(self, document: Document) -> list[dict[str, Any]]:
         # Router logic based on source type
         if document.source_type == Document.SourceType.DOCX:
-            if not document.original_file:
-                raise ValueError("DOCX document source has no original_file uploaded.")
-            
-            # Legacy parser remains unchanged
-            return self.docx_parser.extract_blocks(Path(document.original_file.path))
-
+            with materialize_original_document(document) as file_path:
+                return self.docx_parser.extract_blocks(file_path)
         if document.source_type == Document.SourceType.RAW_TEXT:
             if not document.raw_text or not document.raw_text.strip():
                 raise ValueError("Raw text document source is empty.")

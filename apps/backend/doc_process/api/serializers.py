@@ -63,42 +63,45 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
             "updated_at",
         )
 
-    def validate(self, attrs):
-        original_file = attrs.get("original_file")
-        raw_text = attrs.get("raw_text")
+    def create(self, validated_data):
+        from django.conf import settings
 
-        has_file = bool(original_file)
-        has_text = bool(raw_text and raw_text.strip())
+        uploaded_file = validated_data.pop(
+            "original_file",
+            None,
+        )
 
-        if has_file and has_text:
-            raise serializers.ValidationError(
-                "Provide either file or raw_text, not both."
+        # Raw text - no special file handling required
+        if uploaded_file is None:
+            return Document.objects.create(**validated_data)
+
+        validated_data["original_filename"] = (
+            uploaded_file.name
+        )
+        validated_data["mime_type"] = (
+            getattr(uploaded_file, "content_type", "")
+            or
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+        validated_data["file_size"] = uploaded_file.size
+        validated_data["source_type"] = Document.SourceType.DOCX
+
+        # Production / Vercel
+        if settings.FILE_STORAGE_BACKEND == "database":
+            uploaded_file.seek(0)
+            file_bytes = uploaded_file.read()
+
+            return Document.objects.create(
+                original_file=None,
+                original_file_data=file_bytes,
+                **validated_data,
             )
 
-        if not has_file and not has_text:
-            raise serializers.ValidationError(
-                "One of file or raw_text is required."
-            )
-
-        if has_file:
-            filename = original_file.name or ""
-            extension = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
-            if extension != "docx":
-                raise serializers.ValidationError({
-                    "file": "Only DOCX files are supported."
-                })
-
-            attrs["source_type"] = Document.SourceType.DOCX
-            attrs["raw_text"] = None
-            attrs["original_filename"] = filename
-
-        else:
-            attrs["source_type"] = Document.SourceType.RAW_TEXT
-            attrs["original_file"] = None
-            attrs["raw_text"] = raw_text.strip()
-
-        return attrs
-
+        # Local - EXACT old behaviour
+        return Document.objects.create(
+            original_file=uploaded_file,
+            **validated_data,
+        )
 
 
 class DocumentDetailSerializer(serializers.ModelSerializer):

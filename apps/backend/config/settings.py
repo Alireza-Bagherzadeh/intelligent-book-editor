@@ -109,6 +109,7 @@ CORS_ALLOWED_ORIGINS = [
             "http://127.0.0.1:3000,"
             "http://localhost:5173,"
             "http://127.0.0.1:5173"
+
         )
     ).split(",")
     if origin.strip()
@@ -145,6 +146,11 @@ else:
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
+
+FILE_STORAGE_BACKEND = os.getenv(
+    "FILE_STORAGE_BACKEND",
+    "local",
+).lower()
 
 AUTH_PASSWORD_VALIDATORS = [
     {

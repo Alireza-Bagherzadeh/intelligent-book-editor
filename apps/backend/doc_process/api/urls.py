@@ -1,7 +1,14 @@
 from django.urls import path
 
-from .views import DocumentUploadView, trigger_document_review, get_review_status , DocumentBlocksWithIssuesAPIView, ExportDocumentDocxAPIView, DocumentDifferencesAPIView
-
+from .views import (
+    DocumentUploadView,
+    trigger_document_review,
+    get_review_status,
+    DocumentBlocksWithIssuesAPIView,
+    ExportDocumentDocxAPIView,
+    DownloadExportedDocxAPIView,
+    DocumentDifferencesAPIView,
+)
 urlpatterns = [
     path("documents/upload/", DocumentUploadView.as_view(), name="document-upload"),
     path(
@@ -29,5 +36,10 @@ urlpatterns = [
     "documents/<int:document_id>/differences/",
     DocumentDifferencesAPIView.as_view(),
     name="document-differences",
+    ),
+    path(
+    "documents/<int:document_id>/download-docx/",
+    DownloadExportedDocxAPIView.as_view(),
+    name="download_exported_docx",
     )
 ]

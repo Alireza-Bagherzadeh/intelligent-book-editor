@@ -67,7 +67,11 @@ class Document(TimeStampedModel):
         AI_REVIEWED = "ai_reviewed", "AI Reviewed"
         
         FAILED = "failed", "Failed"
-
+    original_file_data = models.BinaryField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
         
 
     # Core Identifiers
@@ -130,7 +134,7 @@ class Document(TimeStampedModel):
     def clean(self):
         super().clean()
         
-        has_file = bool(self.original_file)
+        has_file = bool(self.original_file or self.original_file_data)
         has_text = bool(self.raw_text and self.raw_text.strip())
 
         # Enforce mutual exclusivity at validation level
@@ -152,7 +156,7 @@ class Document(TimeStampedModel):
 
     def save(self, *args, **kwargs):
         # Auto-detect and populate fields before saving
-        if self.original_file:
+        if self.original_file or self.original_file_data:
             self.source_type = self.SourceType.DOCX
         elif self.raw_text:
             self.source_type = self.SourceType.RAW_TEXT
@@ -176,20 +180,42 @@ class Document(TimeStampedModel):
 
     def save_exported_file(self, file_bytes: bytes):
         """
-        Increment the export version and store the generated DOCX file.
+        Save generated DOCX.
+
+        Local:
+            filesystem via FileField
+
+        Production/Vercel:
+            PostgreSQL via BinaryField
         """
+        from django.conf import settings
+
         self.exported_docx_version += 1
         self.exported_docx_created_at = timezone.now()
 
-        temp_filename = self.original_filename or "export.docx"
+        if settings.FILE_STORAGE_BACKEND == "database":
+            self.exported_docx_data = bytes(file_bytes)
 
-        # Save the file without triggering save() recursively immediately
-        self.exported_docx.save(
-            temp_filename,
-            ContentFile(file_bytes),
-            save=False,
-        )
-        self.save()
+            self.save(
+                update_fields=[
+                    "exported_docx_data",
+                    "exported_docx_version",
+                    "exported_docx_created_at",
+                    "updated_at",
+                ]
+            )
+            return
+
+    # Existing local behaviour
+    temp_filename = self.original_filename or "export.docx"
+
+    self.exported_docx.save(
+        temp_filename,
+        ContentFile(file_bytes),
+        save=False,
+    )
+
+    self.save()
 
     exported_docx = models.FileField(
         upload_to=get_dynamic_export_path,

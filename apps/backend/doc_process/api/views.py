@@ -15,7 +15,10 @@ from django.http import HttpResponse
 from django.http import FileResponse
 from django.http import JsonResponse
 from django.views.decorators.http import require_POST, require_GET
+import os
 
+from django.conf import settings
+from django.urls import reverse
 
 
 class DocumentUploadView(APIView):
@@ -415,7 +418,14 @@ class ExportDocumentDocxAPIView(APIView):
 
             document.save_exported_file(file_bytes)
 
-            download_url = request.build_absolute_uri(document.exported_docx.url)
+            download_url = request.build_absolute_uri(
+               reverse(
+                "download_exported_docx",
+                        kwargs={
+                            "document_id": document.id,
+                        },
+                    )
+                    )
 
             return Response(
                 {
@@ -437,6 +447,55 @@ class ExportDocumentDocxAPIView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
+class DownloadExportedDocxAPIView(APIView):
+
+    def get(self, request, document_id, *args, **kwargs):
+        document = get_object_or_404(
+            Document,
+            id=document_id,
+        )
+
+        filename = (
+            os.path.splitext(
+                document.original_filename or "document"
+            )[0]
+            + ".docx"
+        )
+
+        # Vercel / PostgreSQL
+        if document.exported_docx_data:
+            response = HttpResponse(
+                bytes(document.exported_docx_data),
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            )
+
+            response["Content-Disposition"] = (
+                f'attachment; filename="{filename}"'
+            )
+
+            return response
+
+        # Local / FileField
+        if document.exported_docx:
+            return FileResponse(
+                document.exported_docx.open("rb"),
+                as_attachment=True,
+                filename=filename,
+                content_type=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            )
+
+        return Response(
+            {
+                "error": "No exported DOCX is available."
+            },
+            status=status.HTTP_404_NOT_FOUND,
+        )
 class DocumentDifferencesAPIView(ListAPIView):
     serializer_class = BlockDifferenceSerializer
     # permission_classes = [AllowAny]
