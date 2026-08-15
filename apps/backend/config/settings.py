@@ -182,27 +182,9 @@ CORS_ALLOWED_ORIGINS = [
 # Database
 # ======================================================================
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL"
-)
-
-
-# Prevent accidental SQLite usage on Vercel.
-#
-# Vercel filesystem is not where we want to store application data.
-# Production must use PostgreSQL.
-if IS_VERCEL and not DATABASE_URL:
-    raise ValueError(
-        "DATABASE_URL must be configured on Vercel."
-    )
-
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 if DATABASE_URL:
-    # --------------------------------------------------------------
-    # Production / Vercel
-    # PostgreSQL
-    # --------------------------------------------------------------
-
     import dj_database_url
 
     DATABASES = {
@@ -213,16 +195,9 @@ if DATABASE_URL:
     }
 
 else:
-    # --------------------------------------------------------------
-    # Local development
-    # Existing SQLite database
-    # --------------------------------------------------------------
-
     DATABASES = {
         "default": {
-            "ENGINE": (
-                "django.db.backends.sqlite3"
-            ),
+            "ENGINE": "django.db.backends.sqlite3",
             "NAME": BASE_DIR / "db.sqlite3",
             "OPTIONS": {
                 "timeout": 30,
@@ -231,6 +206,11 @@ else:
         }
     }
 
+FILE_STORAGE_BACKEND = (
+    "database"
+    if DATABASE_URL
+    else "local"
+)
 
 # ======================================================================
 # File Storage Strategy
