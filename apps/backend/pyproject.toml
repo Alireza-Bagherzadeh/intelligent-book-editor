@@ -25,6 +25,3 @@ dependencies = [
 [tool.vercel]
 entrypoint = "config.wsgi:application"
 
-[[tool.vercel.subscribers]]
-entrypoint = "worker:app"
-topics = ["celery"]
