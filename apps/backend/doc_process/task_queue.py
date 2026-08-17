@@ -6,22 +6,39 @@ def enqueue_task(
     *args,
     task_name: str | None = None,
 ):
-    task_backend = os.getenv(
+    backend = os.getenv(
         "TASK_BACKEND",
         "django_q",
     ).lower()
 
-    # Production on Vercel
-    if task_backend == "vercel":
-        from config.celery import app
+    # Production / Vercel
+    if backend == "vercel":
+        from doc_process import vercel_django_tasks
 
-        return app.send_task(
-            task_path,
-            args=list(args),
-            queue="celery",
-        )
+        task_map = {
+            "doc_process.tasks.run_document_parsing_task":
+                vercel_django_tasks.run_document_parsing_task,
 
-    # Local development
+            "doc_process.tasks.run_document_review_job_task":
+                vercel_django_tasks.run_document_review_job_task,
+
+            "doc_process.tasks.run_block_difference_task":
+                vercel_django_tasks.run_block_difference_task,
+
+            "doc_process.tasks.run_ai_review_task":
+                vercel_django_tasks.run_ai_review_task,
+        }
+
+        task = task_map.get(task_path)
+
+        if task is None:
+            raise ValueError(
+                f"Unknown Vercel task: {task_path}"
+            )
+
+        return task.enqueue(*args)
+
+    # Local
     from django_q.tasks import async_task
 
     kwargs = {}

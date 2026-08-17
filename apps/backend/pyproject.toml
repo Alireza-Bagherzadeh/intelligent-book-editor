@@ -19,8 +19,7 @@ dependencies = [
 
     "dj-database-url",
     "psycopg[binary]",
-
-    "celery"
+    "vercel-workers[django]==0.0.25",
 ]
 
 [tool.vercel]

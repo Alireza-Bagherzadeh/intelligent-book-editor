@@ -99,8 +99,26 @@ INSTALLED_APPS = [
     # Project apps
     "doc_process",
 ]
+#################################################################################
+# Tasks 
 
-
+TASKS = {
+    "default": {
+        "BACKEND": (
+            "vercel.workers.django.backend."
+            "VercelQueuesBackend"
+        ),
+        "QUEUES": ["default"],
+        "OPTIONS": {
+            "visibility_timeout_seconds": 300,
+            "visibility_refresh_interval_seconds": 20.0,
+            "max_attempts": 3,
+            "retry_backoff_base_seconds": 5,
+            "retry_backoff_factor": 2.0,
+        },
+    }
+}
+#################################################################################
 # ======================================================================
 # Middleware
 # ======================================================================
