@@ -1,4 +1,4 @@
-from django.tasks import task
+    from django.tasks import task
 
 
 @task(queue_name="default")

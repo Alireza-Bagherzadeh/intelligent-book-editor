@@ -1,4 +1,16 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "python manage.py migrate --noinput"
+  "buildCommand": "python manage.py migrate --noinput",
+  "functions": {
+    "api/queue/callback.py": {
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "default",
+          "retryAfterSeconds": 60,
+          "initialDelaySeconds": 0
+        }
+      ]
+    }
+  }
 }
