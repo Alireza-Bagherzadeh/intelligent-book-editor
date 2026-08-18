@@ -1,4 +1,5 @@
 from doc_process.task_queue import enqueue_task
+from doc_process.services.document_pipeline import DocumentPipelineService
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser, JSONParser
 from rest_framework.response import Response
@@ -30,12 +31,27 @@ class DocumentUploadView(APIView):
         serializer.is_valid(raise_exception=True)
         document = serializer.save()
 
-        enqueue_task(
-            "doc_process.tasks.run_document_parsing_task",
-            document.id,
-            task_name=f"ParseDoc-{document.id}",
-        )
+        # Parse immediately inside the upload request.
+        # This intentionally removes the initial DOCX parsing step from the
+        # background queue critical path on Vercel. The heavier review/AI
+        # stages can still use enqueue_task().
+        try:
+            DocumentPipelineService().parse_document(document)
+        except Exception as exc:
+            # DocumentPipelineService already persists FAILED +
+            # processing_error. Refresh before returning the error payload.
+            document.refresh_from_db()
+            return Response(
+                {
+                    "id": document.id,
+                    "status": document.status,
+                    "processing_error": document.processing_error or str(exc),
+                    "detail": "Document upload succeeded but parsing failed.",
+                },
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
 
+        document.refresh_from_db()
         response_serializer = DocumentUploadSerializer(document)
         return Response(
             response_serializer.data,
