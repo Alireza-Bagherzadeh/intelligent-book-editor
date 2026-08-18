@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Any, List, Optional, Tuple
 import logging
-import requests
 from django.conf import settings
 from django.db import transaction
 from doc_process.models import Document, DocumentBlock, ReviewJob, BlockDifference

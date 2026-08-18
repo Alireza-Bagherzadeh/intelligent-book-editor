@@ -38,4 +38,5 @@ dj-database-url
 psycopg[binary]
 gunicorn
 django-cors-headers
-celery
+vercel-workers==0.0.25
+google-genai

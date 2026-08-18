@@ -1,81 +1,70 @@
-# tasks.py
+from __future__ import annotations
 
 import logging
+
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
-from .models import Document, ReviewJob, DocumentBlock
-from .services.normal_review_service import MockAiReview
+
+from .models import Document, DocumentBlock, ReviewJob
 from .services.document_pipeline import DocumentPipelineService
-from .task_queue import enqueue_task
+from .services.normal_review_service import MockAiReview
 from .services.text_diff_service import process_and_save_block_differences
-from .services.ai_review_service import GeminiReviewService
+from .task_queue import enqueue_task
 
 logger = logging.getLogger(__name__)
 
+
 def run_document_parsing_task(document_id: int):
-    """
-    Background task to parse the uploaded document (Docx to Blocks).
-    """
+    """Parse one uploaded source into DocumentBlock records."""
     try:
         document = Document.objects.get(id=document_id)
-
-        # Update status to indicate processing has started
-        document.status = Document.Status.UPLOADED
-        document.save(update_fields=["status"])
-
-        # Use the pipeline service to handle heavy lifting of parsing
-        pipeline = DocumentPipelineService()
-        pipeline.parse_document(document)
-
-        return f"Document {document_id} parsed successfully."
-
     except Document.DoesNotExist:
+        logger.warning("Document %s was not found for parsing.", document_id)
         return f"Document {document_id} not found."
-    except Exception as exc:
-        logger.error(f"Error parsing document {document_id}: {exc}", exc_info=True)
-        # Error handling is partially managed inside parse_document,
-        # but we re-raise to let the task runner know it failed.
+
+    try:
+        pipeline = DocumentPipelineService()
+        created_count = pipeline.parse_document(document)
+        return f"Document {document_id} parsed successfully ({created_count} blocks)."
+    except Exception:
+        # DocumentPipelineService persists FAILED + processing_error.
+        logger.exception("Error parsing document %s.", document_id)
         raise
 
+
 def run_document_review_job_task(review_job_id: int):
-    """
-    Background task to process document text using MockAiReview.
-    Handles text normalization, RTL enforcement, and issue identification.
-    After successful review, enqueues block difference generation task.
-    """
+    """Run the deterministic/local review, then queue block differences."""
     try:
-        review_job = ReviewJob.objects.select_related("document").get(id=review_job_id)
+        review_job = ReviewJob.objects.select_related("document").get(
+            id=review_job_id
+        )
     except ReviewJob.DoesNotExist:
-        logger.error(f"ReviewJob {review_job_id} not found.")
-        return
+        logger.warning("ReviewJob %s was not found.", review_job_id)
+        return f"ReviewJob {review_job_id} not found."
 
     document = review_job.document
 
-    # Initialize the review service
-    llm_service = MockAiReview()
-
-    # Update job status to RUNNING before starting the heavy process
     review_job.status = ReviewJob.Status.RUNNING
     review_job.started_at = timezone.now()
     review_job.model_name = "local-normalization-v1"
     review_job.error_message = ""
-    review_job.save(update_fields=["status", "started_at", "model_name", "error_message"])
+    review_job.save(
+        update_fields=[
+            "status",
+            "started_at",
+            "model_name",
+            "error_message",
+        ]
+    )
 
-    # Update document status to REVIEWING
     document.status = Document.Status.REVIEWING
     document.processing_error = ""
     document.save(update_fields=["status", "processing_error"])
 
     try:
-        # The service method handles:
-        # 1. Iterating through all blocks
-        # 2. Applying normalization
-        # 3. Setting is_rtl=True
-        # 4. Generating BlockIssue records
-        # 5. Wrapping DB operations in a transaction
-        summary = llm_service.review_document(document, review_job)
+        summary = MockAiReview().review_document(document, review_job)
 
-        # Enqueue next pipeline step: block differences
         enqueue_task(
             "doc_process.tasks.run_block_difference_task",
             review_job.id,
@@ -83,107 +72,39 @@ def run_document_review_job_task(review_job_id: int):
         )
 
         logger.info(
-            f"ReviewJob {review_job_id} review phase completed successfully for Doc {document.id}. "
-            f"Block difference task enqueued."
+            "Review phase completed for ReviewJob %s; difference task queued.",
+            review_job_id,
         )
-        return f"Review completed and block difference task queued: {summary}"
+        return f"Review phase completed: {summary}"
 
     except Exception as exc:
-        error_msg = f"Failed executing review job: {str(exc)}"
-        logger.error(error_msg, exc_info=True)
+        error_message = f"Failed executing review job: {exc}"
+        logger.exception(error_message)
 
-        # Persist failure state
         review_job.status = ReviewJob.Status.FAILED
         review_job.finished_at = timezone.now()
-        review_job.error_message = error_msg
-        review_job.save(update_fields=["status", "finished_at", "error_message"])
+        review_job.error_message = error_message
+        review_job.save(
+            update_fields=["status", "finished_at", "error_message"]
+        )
 
         document.status = Document.Status.FAILED
-        document.processing_error = error_msg
+        document.processing_error = error_message
         document.save(update_fields=["status", "processing_error"])
-
-        raise exc
-
-# def run_document_review_job_task(review_job_id: int):
-#     """
-#     Background task to process document text using MockAiReview.
-#     Handles text normalization, RTL enforcement, and issue identification.
-#     """
-#     try:
-#         review_job = ReviewJob.objects.select_related('document').get(id=review_job_id)
-#     except ReviewJob.DoesNotExist:
-#         logger.error(f"ReviewJob {review_job_id} not found.")
-#         return
-
-#     document = review_job.document
-
-#     # Initialize the review service (currently using local regex-based logic)
-#     llm_service = MockAiReview()
-
-#     # Update Job status to RUNNING before starting the heavy process
-#     review_job.status = ReviewJob.Status.RUNNING
-#     review_job.started_at = timezone.now()
-#     review_job.model_name = "local-normalization-v1"  # Indicating the local processor version
-#     review_job.save(update_fields=["status", "started_at", "model_name"])
-
-#     # Update Document status to REVIEWING
-#     document.status = Document.Status.REVIEWING
-#     document.save(update_fields=["status"])
-
-#     try:
-#         # The service method handles:
-#         # 1. Iterating through all blocks (Paragraphs/Headings)
-#         # 2. Applying normalization (half-spaces, punctuation, etc.)
-#         # 3. Setting is_rtl=True
-#         # 4. Generating BlockIssue records for corrections
-#         # 5. Wrapping DB operations in a transaction
-#         summary = llm_service.review_document(document, review_job)
-
-#         logger.info(f"ReviewJob {review_job_id} successfully completed for Doc {document.id}")
-#         return f"Review completed: {summary}"
-
-#     except Exception as exc:
-#         error_msg = f"Failed executing review job: {str(exc)}"
-#         logger.error(error_msg, exc_info=True)
-
-#         # Ensure failure state is persisted if the service crashes
-#         review_job.status = ReviewJob.Status.FAILED
-#         review_job.finished_at = timezone.now()
-#         review_job.error_message = error_msg
-#         review_job.save(update_fields=["status", "finished_at", "error_message"])
-
-#         document.status = Document.Status.FAILED
-#         document.processing_error = error_msg
-#         document.save(update_fields=["status", "processing_error"])
-
-#         raise exc
-
-# tasks.py (ادامه فایل شما)
+        raise
 
 
 def run_block_difference_task(review_job_id: int):
-    """
-    Background task that calculates and stores differences between
-    raw_text and normalized_text for every document block.
-
-    This is the final stage of the review pipeline:
-    parse -> review -> block differences
-    """
-    review_job = None
-    document = None
+    """Persist raw-vs-normalized differences and finalize local review."""
+    review_job: ReviewJob | None = None
+    document: Document | None = None
 
     try:
-        # Load the review job and its related document in one query.
         review_job = ReviewJob.objects.select_related("document").get(
             id=review_job_id
         )
         document = review_job.document
 
-        # The job should already be RUNNING from the review task.
-        # Do not mark it as SUCCEEDED until all differences are saved.
-
-        # Use one transaction so partial difference records are not persisted
-        # if processing any block fails.
         with transaction.atomic():
             blocks = (
                 DocumentBlock.objects
@@ -191,19 +112,16 @@ def run_block_difference_task(review_job_id: int):
                 .order_by("order_index")
             )
 
-            # Process each block and save its technical normalization differences.
             for block in blocks:
                 process_and_save_block_differences(
                     block=block,
                     review_job=review_job,
                 )
 
-            # Mark the document as reviewed only after the full pipeline succeeds.
             document.status = Document.Status.REVIEWED
             document.processing_error = ""
             document.save(update_fields=["status", "processing_error"])
 
-            # Mark the review job as successful only after differences are stored.
             review_job.status = ReviewJob.Status.SUCCEEDED
             review_job.finished_at = timezone.now()
             review_job.error_message = ""
@@ -215,92 +133,107 @@ def run_block_difference_task(review_job_id: int):
                 ]
             )
 
+        # AI review is optional. Do not make parsing/local review depend on the
+        # provider being configured.
+        if settings.GEMINI_API_KEY and settings.GEMINI_MODEL:
+            enqueue_task(
+                "doc_process.tasks.run_ai_review_task",
+                document.id,
+                task_name=f"AiReview-{document.id}",
+            )
+
         logger.info(
-            "Block differences completed successfully for ReviewJob %s "
-            "and Document %s was marked as REVIEWED.",
+            "Differences completed for ReviewJob %s / Document %s.",
             review_job_id,
             document.id,
         )
-
-        return (
-            f"Differences calculated successfully for ReviewJob "
-            f"{review_job_id}."
-        )
+        return f"Differences calculated for ReviewJob {review_job_id}."
 
     except ReviewJob.DoesNotExist:
-        logger.error(
-            "ReviewJob %s was not found for block difference processing.",
+        logger.warning(
+            "ReviewJob %s was not found for difference processing.",
             review_job_id,
         )
         return f"ReviewJob {review_job_id} not found."
 
     except Exception as exc:
         error_message = f"Block difference processing failed: {exc}"
+        logger.exception(error_message)
 
-        logger.error(
-            "Error calculating differences for ReviewJob %s: %s",
-            review_job_id,
-            exc,
-            exc_info=True,
-        )
-
-        # Persist the failure state for the review job when it was loaded.
         if review_job is not None:
             review_job.status = ReviewJob.Status.FAILED
             review_job.finished_at = timezone.now()
             review_job.error_message = error_message
             review_job.save(
-                update_fields=[
-                    "status",
-                    "finished_at",
-                    "error_message",
-                ]
+                update_fields=["status", "finished_at", "error_message"]
             )
 
-        # Persist the failure state for the document when it was loaded.
         if document is not None:
             document.status = Document.Status.FAILED
             document.processing_error = error_message
             document.save(update_fields=["status", "processing_error"])
 
-        # Re-raise the exception so django-q2 marks the task as failed.
         raise
 
+
 def run_ai_review_task(document_id: int):
-    """
-    Background task for Django-Q to process the document with Gemini.
-    Manages Document and ReviewJob states.
-    """
+    """Run optional Gemini review after the deterministic review succeeds."""
+    if not settings.GEMINI_API_KEY:
+        raise RuntimeError("GEMINI_API_KEY is not configured.")
+    if not settings.GEMINI_MODEL:
+        raise RuntimeError("GEMINI_MODEL is not configured.")
+
     try:
-        doc = Document.objects.get(id=document_id)
-        
-        # Update Document status
-        doc.status = Document.Status.REVIEWING
-        doc.save()
-        
-        # Initialize a new ReviewJob for this run
-        review_job = ReviewJob.objects.create(
-            document=doc,
-            status=ReviewJob.Status.RUNNING,
-            model_name='gemini-3.5-flash',
-            started_at=timezone.now()
-        )
-        
-        # Execute the AI review service
-        GeminiReviewService.process_document(document_id, review_job.id)
-        
-        # Mark the document as reviewed
-        doc.status = Document.Status.REVIEWED
-        doc.save()
-        
-        return f"ReviewJob {review_job.id} completed for document {document_id}"
-        
+        document = Document.objects.get(id=document_id)
     except Document.DoesNotExist:
+        logger.warning("Document %s was not found for AI review.", document_id)
         return f"Document {document_id} not found."
-    except Exception as e:
-        # Handle unhandled pipeline crashes
-        if 'doc' in locals():
-            doc.status = Document.Status.FAILED
-            doc.processing_error = str(e)
-            doc.save()
-        return f"Failed processing document {document_id}: {str(e)}"
+
+    review_job: ReviewJob | None = None
+
+    try:
+        document.status = Document.Status.AI_REVIEWING
+        document.processing_error = ""
+        document.save(update_fields=["status", "processing_error"])
+
+        review_job = ReviewJob.objects.create(
+            document=document,
+            status=ReviewJob.Status.RUNNING,
+            model_name=settings.GEMINI_MODEL,
+            started_at=timezone.now(),
+        )
+
+        # Lazy import keeps upload/parsing independent from the Gemini SDK.
+        from .services.ai_review_service import GeminiReviewService
+
+        summary = GeminiReviewService.process_document(
+            document_id,
+            review_job.id,
+        )
+
+        document.status = Document.Status.AI_REVIEWED
+        document.processing_error = ""
+        document.save(update_fields=["status", "processing_error"])
+
+        return (
+            f"AI ReviewJob {review_job.id} completed for document "
+            f"{document_id}: {summary}"
+        )
+
+    except Exception as exc:
+        logger.exception("AI review failed for document %s.", document_id)
+
+        if review_job is not None and review_job.status != ReviewJob.Status.FAILED:
+            review_job.status = ReviewJob.Status.FAILED
+            review_job.finished_at = timezone.now()
+            review_job.error_message = str(exc)
+            review_job.save(
+                update_fields=["status", "finished_at", "error_message"]
+            )
+
+        # Keep the usable deterministic review available even if the optional
+        # AI provider fails. The queue still receives the exception and can retry.
+        document.status = Document.Status.REVIEWED
+        document.processing_error = f"AI review failed: {exc}"
+        document.save(update_fields=["status", "processing_error"])
+        raise

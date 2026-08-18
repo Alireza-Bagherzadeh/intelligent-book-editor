@@ -18,7 +18,7 @@ def materialize_original_document(
         return the original FileField path.
 
     Production:
-        write BinaryField bytes temporarily to /tmp.
+        write BinaryField bytes to the platform temporary directory.
     """
 
     # Production / DB-backed file
@@ -29,7 +29,6 @@ def materialize_original_document(
 
         fd, temp_path = tempfile.mkstemp(
             suffix=suffix,
-            dir="/tmp",
         )
 
         try:

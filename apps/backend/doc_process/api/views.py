@@ -83,7 +83,11 @@ def trigger_document_review(request, document_id):
     )
 
     try:
-        async_task("doc_process.tasks.run_document_review_job_task", review_job.id)
+        enqueue_task(
+            "doc_process.tasks.run_document_review_job_task",
+            review_job.id,
+            task_name=f"ReviewDoc-{document.id}",
+        )
 
         return JsonResponse({
             "success": True,
@@ -241,6 +245,8 @@ class DocumentBlocksWithIssuesAPIView(ListAPIView):
             Document.Status.PARSED,
             Document.Status.REVIEWING,
             Document.Status.REVIEWED,
+            Document.Status.AI_REVIEWING,
+            Document.Status.AI_REVIEWED,
         }
 
         if document.status not in allowed_statuses:

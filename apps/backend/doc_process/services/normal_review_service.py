@@ -2,9 +2,7 @@
 import re
 import logging
 import difflib
-from django.utils import timezone
 from django.db import transaction
-from doc_process.task_queue import enqueue_task  # Added to trigger background tasks
 
 from doc_process.models import Document, BlockIssue, ReviewJob
 
@@ -145,18 +143,7 @@ class MockAiReview:
         return issues
 
     def review_document(self, document: Document, review_job: ReviewJob) -> dict:
-        """
-        Review the document locally and create precise issues using diff-based detection.
-        After completion, triggers the real AI review via Django-Q.
-        """
-        review_job.status = ReviewJob.Status.RUNNING
-        review_job.started_at = timezone.now()
-        review_job.model_name = "local-normalization-v1"
-        review_job.save(update_fields=["status", "started_at", "model_name"])
-
-        document.status = Document.Status.REVIEWING
-        document.save(update_fields=["status"])
-
+        """Normalize blocks and create local issues; orchestration lives in tasks.py."""
         blocks = document.blocks.all().order_by("order_index")
         total_issues_created = 0
 
@@ -174,67 +161,46 @@ class MockAiReview:
                     block.is_rtl = True
                     block.alignment = "right"
                     block.normalized_text = normalized
-                    block.save(update_fields=["normalized_text", "is_rtl", "alignment"])
+                    block.save(
+                        update_fields=["normalized_text", "is_rtl", "alignment"]
+                    )
 
-                    # Build issues from a real diff, not from guessed regex spans
-                    issue_payloads = self._build_issue_from_diff(original, normalized)
+                    issue_payloads = self._build_issue_from_diff(
+                        original, normalized
+                    )
+                    if not issue_payloads:
+                        continue
 
-                    if issue_payloads:
-                        issues = [
-                            BlockIssue(
-                                document=document,
-                                block=block,
-                                review_job=review_job,
-                                issue_code=item["issue_code"],
-                                title=item["title"],
-                                description=item["description"],
-                                severity=item["severity"],
-                                start_offset=item["start_offset"],
-                                end_offset=item["end_offset"],
-                                suggestion_text=item["suggestion_text"],
-                                extra_data={"original_segment": item["original_segment"]},
-                            )
-                            for item in issue_payloads
-                        ]
-                        BlockIssue.objects.bulk_create(issues)
-                        total_issues_created += len(issues)
-                    else:
-                        # If normalization changed nothing, no issue is created.
-                        pass
+                    issues = [
+                        BlockIssue(
+                            document=document,
+                            block=block,
+                            review_job=review_job,
+                            issue_code=item["issue_code"],
+                            title=item["title"],
+                            description=item["description"],
+                            severity=item["severity"],
+                            start_offset=item["start_offset"],
+                            end_offset=item["end_offset"],
+                            suggestion_text=item["suggestion_text"],
+                            extra_data={
+                                "original_segment": item["original_segment"]
+                            },
+                        )
+                        for item in issue_payloads
+                    ]
+                    BlockIssue.objects.bulk_create(issues)
+                    total_issues_created += len(issues)
 
-            review_job.status = ReviewJob.Status.SUCCEEDED
-            review_job.finished_at = timezone.now()
-            review_job.response_payload = {
+            summary = {
                 "status": "success",
                 "processed_blocks": blocks.count(),
                 "issues_count": total_issues_created,
             }
-            review_job.save(update_fields=["status", "finished_at", "response_payload"])
+            review_job.response_payload = summary
+            review_job.save(update_fields=["response_payload"])
+            return summary
 
-            document.status = Document.Status.REVIEWED
-            document.save(update_fields=["status"])
-
-            # ---------------------------------------------------------
-            # Trigger the Real AI (Gemini) review in the background
-            # Make sure 'doc_process' matches your actual app name
-            # ---------------------------------------------------------
-            enqueue_task('doc_process.tasks.run_ai_review_task', document.id)
-
-            return {
-                "status": "success",
-                "processed_blocks": blocks.count(),
-                "issues_count": total_issues_created,
-            }
-
-        except Exception as e:
-            logger.error(f"Error in local Review Service: {e}", exc_info=True)
-
-            review_job.status = ReviewJob.Status.FAILED
-            review_job.finished_at = timezone.now()
-            review_job.error_message = str(e)
-            review_job.save(update_fields=["status", "finished_at", "error_message"])
-
-            document.status = Document.Status.FAILED
-            document.processing_error = f"Review failed: {str(e)}"
-            document.save(update_fields=["status", "processing_error"])
+        except Exception:
+            logger.exception("Error in local review service.")
             raise

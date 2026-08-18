@@ -1,53 +1,45 @@
+from __future__ import annotations
+
+import json
 import os
+from typing import Any
+
+
+VERCEL_QUEUE_TOPIC = "default"
 
 
 def enqueue_task(
     task_path: str,
-    *args,
+    *args: Any,
     task_name: str | None = None,
 ):
-    backend = os.getenv(
-        "TASK_BACKEND",
-        "django_q",
-    ).lower()
+    """Dispatch through Vercel Queues in production and Django-Q locally."""
+    default_backend = "vercel" if os.getenv("VERCEL") else "django_q"
+    backend = os.getenv("TASK_BACKEND", default_backend).lower()
 
-    # Production / Vercel
     if backend == "vercel":
-        from doc_process import vercel_django_tasks
+        from vercel.workers import send
 
-        task_map = {
-            "doc_process.tasks.run_document_parsing_task":
-                vercel_django_tasks.run_document_parsing_task,
-
-            "doc_process.tasks.run_document_review_job_task":
-                vercel_django_tasks.run_document_review_job_task,
-
-            "doc_process.tasks.run_block_difference_task":
-                vercel_django_tasks.run_block_difference_task,
-
-            "doc_process.tasks.run_ai_review_task":
-                vercel_django_tasks.run_ai_review_task,
+        payload = {
+            "task_path": task_path,
+            "args": list(args),
+            "task_name": task_name,
         }
 
-        task = task_map.get(task_path)
+        # Fail immediately with a useful error if a future caller passes an
+        # argument that cannot be represented in a queue message.
+        json.dumps(payload)
+        return send(VERCEL_QUEUE_TOPIC, payload)
 
-        if task is None:
-            raise ValueError(
-                f"Unknown Vercel task: {task_path}"
-            )
+    if backend != "django_q":
+        raise ValueError(
+            "TASK_BACKEND must be either 'vercel' or 'django_q'."
+        )
 
-        return task.enqueue(*args)
-
-    # Local
     from django_q.tasks import async_task
 
-    kwargs = {}
-
+    kwargs: dict[str, Any] = {}
     if task_name:
         kwargs["task_name"] = task_name
 
-    return async_task(
-        task_path,
-        *args,
-        **kwargs,
-    )
+    return async_task(task_path, *args, **kwargs)

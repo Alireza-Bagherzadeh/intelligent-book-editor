@@ -30,11 +30,9 @@ class DocumentPipelineService:
             block_payloads = self._extract_blocks(document)
 
             if not block_payloads:
-                self._mark_failed(
-                    document,
-                    "Parser returned zero blocks. The input source may be empty.",
+                raise ValueError(
+                    "Parser returned zero blocks. The input source may be empty."
                 )
-                return 0
 
             # 2. Persist to DB using unified logic
             created_count = self._persist_blocks(

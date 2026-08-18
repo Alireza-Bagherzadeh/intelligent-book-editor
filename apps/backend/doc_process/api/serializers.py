@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from ..models import Document, BlockDifference
-from rest_framework import serializers
 from doc_process.models import BlockIssue, DocumentBlock
 
 
@@ -62,6 +61,27 @@ class DocumentUploadSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+    def validate_file(self, value):
+        if value and not value.name.lower().endswith(".docx"):
+            raise serializers.ValidationError("Only .docx files are allowed.")
+        return value
+
+    def validate(self, attrs):
+        uploaded_file = attrs.get("original_file")
+        raw_text = attrs.get("raw_text")
+        has_file = uploaded_file is not None
+        has_text = bool(raw_text and raw_text.strip())
+
+        if has_file and has_text:
+            raise serializers.ValidationError(
+                "Provide either a DOCX file or raw_text, not both."
+            )
+        if not has_file and not has_text:
+            raise serializers.ValidationError(
+                "A DOCX file or non-empty raw_text is required."
+            )
+        return attrs
 
     def create(self, validated_data):
         from django.conf import settings
@@ -210,14 +230,12 @@ class BlockIssueSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_original_text(self, issue: BlockIssue) -> str:
-        """
-        Extract the problematic segment from the block's normalized text.
+        """Return the source segment the issue offsets refer to."""
+        original_segment = (issue.extra_data or {}).get("original_segment")
+        if isinstance(original_segment, str):
+            return original_segment
 
-        BlockIssue offsets are defined relative to normalized_text.
-        """
-        block = issue.block
-        text = block.normalized_text or ""
-
+        text = issue.block.raw_text or ""
         start = issue.start_offset
         end = issue.end_offset
 
@@ -225,70 +243,6 @@ class BlockIssueSerializer(serializers.ModelSerializer):
             return ""
 
         return text[start:min(end, len(text))]
-
-
-class DocumentBlockWithIssuesSerializer(serializers.ModelSerializer):
-    issues = serializers.SerializerMethodField()
-    issues_count = serializers.SerializerMethodField()
-
-    is_heading = serializers.BooleanField(read_only=True)
-    has_children = serializers.BooleanField(read_only=True)
-
-    class Meta:
-        model = DocumentBlock
-        fields = [
-            "id",
-            "document",
-            "parent_heading",
-            "block_type",
-            "heading_level",
-            "order_index",
-            "raw_text",
-            "normalized_text",
-            "style_name",
-            "is_rtl",
-            "alignment",
-            "paragraph_index",
-            "table_index",
-            "row_index",
-            "cell_index",
-            "cell_paragraph_index",
-            "source_path",
-            "format_metadata",
-            "is_heading",
-            "has_children",
-            "issues_count",
-            "issues",
-            "created_at",
-            "updated_at",
-        ]
-        read_only_fields = fields
-
-    def get_issues(self, block: DocumentBlock) -> list[dict]:
-        """
-        Uses the issues prefetched by the view.
-
-        Falls back to block.issues.all() if the serializer is used
-        somewhere without the optimized prefetch.
-        """
-        issues = getattr(block, "prefetched_issues", None)
-
-        if issues is None:
-            issues = block.issues.select_related("review_job").all()
-
-        return BlockIssueSerializer(
-            issues,
-            many=True,
-            context=self.context,
-        ).data
-
-    def get_issues_count(self, block: DocumentBlock) -> int:
-        issues = getattr(block, "prefetched_issues", None)
-
-        if issues is not None:
-            return len(issues)
-
-        return block.issues.count()
 
 
 class DocumentBlockWithIssuesSerializer(serializers.ModelSerializer):
